@@ -1,0 +1,10 @@
+# Google Maps Scraper Input File
+# Put one search query per line
+# Format: "business type in location"
+# Comments start with # and are ignored
+
+coffee shops in Seattle
+restaurants in Boston
+dentists in Los Angeles
+gyms in Miami
+hotels in New York
