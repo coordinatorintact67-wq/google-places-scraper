@@ -23,20 +23,12 @@ driver = webdriver.Chrome(options=option)
 wait = WebDriverWait(driver, 10)
 
 
-def scroll_page(scrolls=5):
-    """Scroll to load more results"""
-    for i in range(scrolls):
-        driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.END)
-        time.sleep(randint(2, 3))
-        print(f"📜 Scroll {i+1}/{scrolls}")
-
-
 def extract_detail_panel():
     """Extract data from the right side detail panel after clicking"""
     business_data = {}
 
     try:
-        time.sleep(2)  # Wait for panel to load
+        time.sleep(2)
 
         # Business Name
         name_selectors = [
@@ -81,6 +73,7 @@ def extract_detail_panel():
 
         # Total Reviews
         review_selectors = [
+            'span.RDApEe.YrbPuc',
             'span.RDApEe',
             'span.F7nice span:nth-child(2)',
             'div.F7nice span[aria-label*="reviews"]'
@@ -90,7 +83,6 @@ def extract_detail_panel():
             try:
                 reviews_elem = driver.find_element(By.CSS_SELECTOR, selector)
                 reviews_text = reviews_elem.text.strip()
-                # Extract number from parentheses
                 reviews = reviews_text.replace('(', '').replace(')', '').replace(',', '').strip()
                 if reviews and (reviews.isdigit() or 'K' in reviews.upper()):
                     business_data['total_reviews'] = reviews
@@ -122,22 +114,20 @@ def extract_detail_panel():
 
         # Address
         address_selectors = [
-            'span.LrzXr',  # Direct address element from inspection
+            'span.LrzXr',
             'button[data-item-id="address"]',
             'button[data-tooltip*="Address"]',
             'div.rogA2c[data-item-id="address"]',
-            'div[data-item-id="address"]'  # Fallback selector
+            'div[data-item-id="address"]'
         ]
 
         for selector in address_selectors:
             try:
                 addr_elem = driver.find_element(By.CSS_SELECTOR, selector)
-                # Try aria-label first
                 address = addr_elem.get_attribute('aria-label')
                 if not address:
                     address = addr_elem.text.strip()
 
-                # Clean up
                 if address:
                     address = address.replace('Address: ', '').replace('Copy address', '').strip()
                     if address:
@@ -154,22 +144,20 @@ def extract_detail_panel():
             'button[data-item-id*="phone"]',
             'button[aria-label*="Phone"]',
             'a[data-item-id*="phone"]',
-            'a[data-dtype="d3ph"]',  # Specific selector for the HTML structure you showed
-            'span.LrzXr.zdqRlf.kno-fv a',  # Another specific selector from your HTML
-            'span.w8qArf.FoJoyf a.fl',  # Selector for the phone link element
-            'span.LrzXr'  # Direct span with phone number
+            'a[data-dtype="d3ph"]',
+            'span.LrzXr.zdqRlf.kno-fv a',
+            'span.w8qArf.FoJoyf a.fl',
+            'span.LrzXr'
         ]
 
         for selector in phone_selectors:
             try:
                 phone_elements = driver.find_elements(By.CSS_SELECTOR, selector)
                 for phone_elem in phone_elements:
-                    # Try aria-label
                     phone = phone_elem.get_attribute('aria-label')
                     if not phone:
                         phone = phone_elem.text.strip()
 
-                    # Also check for phone number in nested spans or links
                     if not phone:
                         try:
                             nested_spans = phone_elem.find_elements(By.CSS_SELECTOR, 'span, a')
@@ -181,16 +169,11 @@ def extract_detail_panel():
                         except:
                             pass
 
-                    # Clean up
                     if phone:
-                        # Remove common prefixes
                         phone = phone.replace('Phone: ', '').replace('Copy phone number', '').strip()
                         phone = phone.replace('Call', '').replace('phone number', '').strip()
 
-                        # Check if it looks like a phone number
                         if phone and ('+' in phone or sum(c.isdigit() for c in phone) >= 7):
-                            # Further clean up to remove extra text
-                            # Extract phone number pattern
                             phone_match = re.search(r'(\+?\d[\d\s\-\(\)]{7,})', phone)
                             if phone_match:
                                 business_data['phone'] = phone_match.group(1).strip()
@@ -200,39 +183,15 @@ def extract_detail_panel():
 
                 if 'phone' in business_data:
                     break
-            except Exception as e:
-                continue
-
-        # Additional attempt: Look for phone numbers in the entire page
-        if business_data.get('phone', "N/A") == "N/A":
-            try:
-                # Look for common phone number patterns in the entire page
-                page_text = driver.page_source
-                # Regex to find phone numbers
-                phone_patterns = [
-                    r'\+\d{1,3}[\s\-]?\d{3}[\s\-]?\d{3}[\s\-]?\d{4}',  # +1 212-564-7444
-                    r'\+?\d{1,3}[\s\-\(\)]*\d{3}[\s\-\(\)]*\d{3}[\s\-\(\)]*\d{4}',  # Various formats
-                    r'\b\d{3}[\s\-]?\d{3}[\s\-]?\d{4}\b',  # 123-456-7890
-                ]
-
-                for pattern in phone_patterns:
-                    matches = re.findall(pattern, page_text)
-                    if matches:
-                        # Take the first match that looks like a valid phone number
-                        for match in matches:
-                            if '+' in match or sum(c.isdigit() for c in match) >= 10:
-                                business_data['phone'] = match.strip()
-                                break
-                        if business_data['phone'] != "N/A":
-                            break
             except:
-                pass
+                continue
 
         if 'phone' not in business_data:
             business_data['phone'] = "N/A"
 
         # Website
         website_selectors = [
+            'a.n1obkb.mI8Pwc',
             'a[data-item-id="authority"]',
             'a[aria-label*="Website"]',
             'button[data-item-id="authority"]'
@@ -291,7 +250,6 @@ def extract_detail_panel():
         if 'hours_status' not in business_data:
             business_data['hours_status'] = "N/A"
 
-        # Current URL (Google Maps Link)
         business_data['google_maps_url'] = driver.current_url
 
         return business_data
@@ -301,279 +259,166 @@ def extract_detail_panel():
         return None
 
 
-def extract_from_search_results(listing_element):
-    """Extract data directly from search results page without clicking"""
-    business_data = {}
+def scrape_current_page(driver, all_businesses):
+    """Scrape listings from the current search results page"""
+    wait = WebDriverWait(driver, 15)
 
+    # Handle consent if appears
     try:
-        # Name
-        name_selectors = [
-            '.dbg0pd',  # Common name selector in search results
-            '.LC20lb',  # Another common name selector
-            '.s3v9rd',  # Another name selector
-            'h3'
-        ]
+        consent = driver.find_element(By.XPATH, "//button[contains(., 'Accept all') or contains(., 'Reject all')]")
+        consent.click()
+        time.sleep(2)
+    except:
+        pass
 
-        for selector in name_selectors:
+    # Find clickable listings
+    clickable_selectors = [
+        'a.vwVdIc',
+        'div.VkpGBb a',
+        'a[jsname]',
+        'div[role="article"] a',
+        'div.g a',
+        'a.sVXRqc'  # Additional selector
+    ]
+    
+    listings = []
+    successful_selector = None
+    
+    for selector in clickable_selectors:
+        try:
+            listings = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, selector)))
+            if len(listings) > 0:
+                successful_selector = selector
+                print(f"✓ Found {len(listings)} listings using: {selector}")
+                break
+        except:
+            continue
+
+    if not listings:
+        print("⚠️ No clickable listings found on this page")
+        return all_businesses
+
+    total_to_scrape = len(listings)
+    print(f"📊 Will scrape ALL {total_to_scrape} listings from current page")
+
+    for i in range(total_to_scrape):
+        try:
+            print(f"\n[{len(all_businesses)+1}] Processing listing {i+1}...")
+
+            # Re-find listings to avoid stale elements
+            current_listings = driver.find_elements(By.CSS_SELECTOR, successful_selector)
+            if i >= len(current_listings):
+                print(f"⚠️ Ran out of listings at index {i}")
+                break
+            
+            listing = current_listings[i]
+
+            # Scroll into view
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", listing)
+            time.sleep(randint(1, 2))
+
+            # Click
             try:
-                name_elem = listing_element.find_element(By.CSS_SELECTOR, selector)
-                name = name_elem.text.strip()
-                if name:
-                    business_data['name'] = name
-                    break
+                listing.click()
             except:
-                continue
+                driver.execute_script("arguments[0].click();", listing)
+            
+            time.sleep(randint(3, 5))
 
-        if 'name' not in business_data:
-            business_data['name'] = "N/A"
+            # Extract data
+            business_data = extract_detail_panel()
 
-        # Address
-        address_selectors = [
-            '.rllt__details .rllt__descriptor',  # Address in local results
-            '.rllt__details div',  # Alternative address selector
-            '.LrzXr'  # Direct address element
-        ]
+            if business_data and business_data.get('name') != "N/A":
+                all_businesses.append(business_data)
 
-        for selector in address_selectors:
+                print(f"✅ {business_data['name']}")
+                print(f"   ⭐ {business_data['rating']} ({business_data['total_reviews']} reviews)")
+                print(f"   📍 {business_data['address']}")
+                print(f"   📞 {business_data['phone']}")
+                print(f"   🌐 {business_data['website']}")
+                print(f"   🏷️  {business_data['category']}")
+                print("-" * 80)
+
+                # Save incrementally
+                with open("google_search_results.json", "w", encoding="utf-8") as f:
+                    json.dump(all_businesses, f, indent=2, ensure_ascii=False)
+
+            else:
+                print("⚠️ Could not extract data")
+
+            # Go back
+            driver.back()
+            time.sleep(randint(2, 4))
+            
+        except Exception as e:
+            print(f"❌ Error on listing {i+1}: {e}")
             try:
-                addr_elem = listing_element.find_element(By.CSS_SELECTOR, selector)
-                address = addr_elem.text.strip()
-                if address and '·' in address:  # Google often puts address with rating separator
-                    address = address.split('·')[0].strip()
-                if address:
-                    business_data['address'] = address
-                    break
-            except:
-                continue
-
-        if 'address' not in business_data:
-            business_data['address'] = "N/A"
-
-        # Phone Number - specifically targeting the structure you mentioned
-        phone_selectors = [
-            'a[data-dtype="d3ph"]',  # The specific selector from your HTML
-            'span.LrzXr.zdqRlf.kno-fv a',  # Selector for phone link
-            'span.w8qArf.FoJoyf a.fl',  # Phone link selector
-            '.rllt__phone-number',  # Phone in local results
-            'span.LrzXr'  # General span with phone
-        ]
-
-        for selector in phone_selectors:
-            try:
-                phone_elements = listing_element.find_elements(By.CSS_SELECTOR, selector)
-                for phone_elem in phone_elements:
-                    # Try aria-label
-                    phone = phone_elem.get_attribute('aria-label')
-                    if not phone:
-                        phone = phone_elem.text.strip()
-
-                    # Also check for phone number in nested spans or links
-                    if not phone:
-                        try:
-                            nested_spans = phone_elem.find_elements(By.CSS_SELECTOR, 'span, a')
-                            for nested in nested_spans:
-                                nested_text = nested.text.strip()
-                                if nested_text and ('+' in nested_text or sum(c.isdigit() for c in nested_text) >= 7):
-                                    phone = nested_text
-                                    break
-                        except:
-                            pass
-
-                    # Clean up
-                    if phone:
-                        # Remove common prefixes
-                        phone = phone.replace('Phone: ', '').replace('Copy phone number', '').strip()
-                        phone = phone.replace('Call', '').replace('phone number', '').strip()
-
-                        # Check if it looks like a phone number
-                        if phone and ('+' in phone or sum(c.isdigit() for c in phone) >= 7):
-                            # Further clean up to remove extra text
-                            # Extract phone number pattern
-                            phone_match = re.search(r'(\+?\d[\d\s\-\(\)]{7,})', phone)
-                            if phone_match:
-                                business_data['phone'] = phone_match.group(1).strip()
-                            else:
-                                business_data['phone'] = phone
-                            break
-
-                if 'phone' in business_data:
-                    break
-            except Exception as e:
-                continue
-
-        # If still no phone, try to find it in the HTML source of this element
-        if business_data.get('phone', "N/A") == "N/A":
-            try:
-                element_html = listing_element.get_attribute('innerHTML')
-                # Look for phone number patterns in the element's HTML
-                phone_patterns = [
-                    r'\+\d{1,3}[\s\-]?\d{3}[\s\-]?\d{3}[\s\-]?\d{4}',  # +1 212-564-7444
-                    r'\+?\d{1,3}[\s\-\(\)]*\d{3}[\s\-\(\)]*\d{3}[\s\-\(\)]*\d{4}',  # Various formats
-                    r'\b\d{3}[\s\-]?\d{3}[\s\-]?\d{4}\b',  # 123-456-7890
-                ]
-
-                for pattern in phone_patterns:
-                    matches = re.findall(pattern, element_html)
-                    if matches:
-                        # Take the first match that looks like a valid phone number
-                        for match in matches:
-                            if '+' in match or sum(c.isdigit() for c in match) >= 10:
-                                business_data['phone'] = match.strip()
-                                break
-                        if business_data['phone'] != "N/A":
-                            break
+                driver.back()
+                time.sleep(2)
             except:
                 pass
+            continue
 
-        if 'phone' not in business_data:
-            business_data['phone'] = "N/A"
+    return all_businesses
 
-        # Rating
-        rating_selectors = [
-            '.rllt__star-rating .rllt__rating',
-            '.rllt__details .rllt__descriptor',
-            '.rllt__bottom-line .rllt__rating'
-        ]
 
-        for selector in rating_selectors:
+def click_next_page(driver):
+    """Click next page button - IMPROVED VERSION"""
+    
+    # Scroll to bottom first
+    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+    time.sleep(2)
+    
+    # Try multiple next button selectors
+    next_selectors = [
+        'a#pnnext',  # Standard Google next button
+        'a[aria-label*="Next"]',
+        'a[aria-label*="next"]',
+        'td.b a',  # Pagination table cell
+        'span.SJajHc.NVbCr a',  # Google pagination
+        'a.nBDE1b.G5eFlf',  # Another pagination selector
+        '#pnnext',
+        'span[style*="background:url"] a',  # Next arrow image
+        'table#nav td:last-child a',  # Last pagination cell
+    ]
+    
+    for selector in next_selectors:
+        try:
+            print(f"🔍 Trying selector: {selector}")
+            
+            # Wait for element
+            next_button = WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+            )
+            
+            # Check if button is enabled (not greyed out)
+            aria_label = next_button.get_attribute('aria-label')
+            if aria_label and 'next' in aria_label.lower():
+                print(f"✓ Found next button: {aria_label}")
+            
+            # Scroll to button
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button)
+            time.sleep(1)
+            
+            # Try clicking
             try:
-                rating_elem = listing_element.find_element(By.CSS_SELECTOR, selector)
-                rating_text = rating_elem.text.strip()
-                # Extract rating from text like "4.5 · 100 reviews"
-                rating_match = re.search(r'(\d+\.?\d*)', rating_text)
-                if rating_match:
-                    business_data['rating'] = rating_match.group(1)
-                    break
+                next_button.click()
             except:
-                continue
-
-        if 'rating' not in business_data:
-            business_data['rating'] = "N/A"
-
-        # Total Reviews
-        review_selectors = [
-            '.rllt__bottom-line .rllt__reviews',
-            '.rllt__details .rllt__descriptor',
-            'span[aria-label*="stars"]'
-        ]
-
-        for selector in review_selectors:
-            try:
-                review_elem = listing_element.find_element(By.CSS_SELECTOR, selector)
-                review_text = review_elem.text.strip()
-                # Extract number of reviews
-                review_match = re.search(r'\(([\d,]+)\)|([\d,]+)\s+reviews?', review_text, re.IGNORECASE)
-                if review_match:
-                    # Get the first non-None group
-                    groups = review_match.groups()
-                    for group in groups:
-                        if group:
-                            business_data['total_reviews'] = group.replace(',', '').strip()
-                            break
-                    if 'total_reviews' in business_data:
-                        break
-            except:
-                continue
-
-        if 'total_reviews' not in business_data:
-            business_data['total_reviews'] = "N/A"
-
-        # Category
-        category_selectors = [
-            '.rllt__bottom-line .rllt__category',
-            '.rllt__details .rllt__descriptor',
-            '.rllt__category-button'
-        ]
-
-        for selector in category_selectors:
-            try:
-                category_elem = listing_element.find_element(By.CSS_SELECTOR, selector)
-                category = category_elem.text.strip()
-                if category and '·' in category:  # Split on separator if present
-                    parts = category.split('·')
-                    for part in parts:
-                        part = part.strip()
-                        if part and not re.match(r'^\d+\.?\d*$', part) and '(' not in part and ')' not in part:
-                            business_data['category'] = part
-                            break
-                    if 'category' in business_data:
-                        break
-                elif category:
-                    business_data['category'] = category
-                    break
-            except:
-                continue
-
-        if 'category' not in business_data:
-            business_data['category'] = "N/A"
-
-        # Website
-        website_selectors = [
-            'a[data-item-id="authority"]',
-            'a[href*="http"]:not([data-item-id="phone"]):not([data-item-id="address"])'
-        ]
-
-        for selector in website_selectors:
-            try:
-                website_elem = listing_element.find_element(By.CSS_SELECTOR, selector)
-                website = website_elem.get_attribute('href')
-                if not website:
-                    website = website_elem.text.strip()
-
-                if website and 'http' in website and 'google' not in website.lower():
-                    business_data['website'] = website
-                    break
-            except:
-                continue
-
-        if 'website' not in business_data:
-            business_data['website'] = "N/A"
-
-        # Price range
-        price_selectors = [
-            '.rllt__bottom-line .rllt__price'
-        ]
-
-        for selector in price_selectors:
-            try:
-                price_elem = listing_element.find_element(By.CSS_SELECTOR, selector)
-                price = price_elem.text.strip()
-                if price and '$' in price:
-                    business_data['price_range'] = price
-                    break
-            except:
-                continue
-
-        if 'price_range' not in business_data:
-            business_data['price_range'] = "N/A"
-
-        # Hours status
-        hours_selectors = [
-            '.rllt__bottom-line .rllt__open-status'
-        ]
-
-        for selector in hours_selectors:
-            try:
-                hours_elem = listing_element.find_element(By.CSS_SELECTOR, selector)
-                hours = hours_elem.text.strip()
-                if hours:
-                    business_data['hours_status'] = hours
-                    break
-            except:
-                continue
-
-        if 'hours_status' not in business_data:
-            business_data['hours_status'] = "N/A"
-
-        return business_data
-
-    except Exception as e:
-        print(f"❌ Error extracting from search results: {e}")
-        return None
+                driver.execute_script("arguments[0].click();", next_button)
+            
+            print("✅ Next button clicked successfully!")
+            time.sleep(randint(4, 6))  # Wait for page load
+            return True
+            
+        except Exception as e:
+            continue
+    
+    print("❌ Could not find next button")
+    return False
 
 
-def scrape_google_search(search_query, location="", max_results=50):
-    """Main scraping with click logic"""
+def scrape_google_search(search_query, location=""):
+    """Main scraping with UNLIMITED pagination - Scrapes ALL available results"""
 
     if location:
         query = f"{search_query} in {location}"
@@ -583,7 +428,8 @@ def scrape_google_search(search_query, location="", max_results=50):
     search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}&udm=1"
 
     print(f"\n🔍 Searching: {query}")
-    print(f"🌐 URL: {search_url}\n")
+    print(f"🌐 URL: {search_url}")
+    print(f"♾️  Mode: UNLIMITED - Will scrape ALL available pages!\n")
 
     driver.get(search_url)
     time.sleep(5)
@@ -596,167 +442,40 @@ def scrape_google_search(search_query, location="", max_results=50):
     except:
         pass
 
-    # Scroll to load more
-    print("📜 Loading more results...")
-    scroll_page(scrolls=5)
-
-    # Find clickable business listings
-    print("\n📍 Finding business listings...")
-
-    clickable_selectors = [
-        'a.vwVdIc',  # Common clickable link in Google search
-        'div.VkpGBb a',
-        'a[jsname]',
-        'div[role="article"] a',
-        'div.g a'
-    ]
-
-    clickable_listings = []
-    for selector in clickable_selectors:
-        try:
-            elements = driver.find_elements(By.CSS_SELECTOR, selector)
-            if len(elements) > 0:
-                clickable_listings = elements
-                print(f"✓ Found {len(elements)} clickable listings with: {selector}")
-                break
-        except:
-            continue
-
-    if not clickable_listings:
-        print("❌ No clickable listings found! Trying alternative approach...")
-        # Try to extract data directly from search results
-        try:
-            # Look for local business listings
-            local_selectors = [
-                '.rllt__details',  # Local results details
-                '.rlfsb',  # Another local results container
-                '[data-sokoban-container]'  # Container for local results
-            ]
-
-            for local_selector in local_selectors:
-                try:
-                    local_containers = driver.find_elements(By.CSS_SELECTOR, local_selector)
-                    if local_containers:
-                        print(f"Found {len(local_containers)} potential local result containers")
-                        all_businesses = []
-
-                        for idx, container in enumerate(local_containers[:max_results]):
-                            try:
-                                print(f"\n[{idx+1}/{min(len(local_containers), max_results)}] Processing local listing...")
-
-                                # Extract directly from search results
-                                business_data = extract_from_search_results(container)
-
-                                if business_data and business_data.get('name') != "N/A":
-                                    all_businesses.append(business_data)
-
-                                    print(f"✅ {business_data['name']}")
-                                    print(f"   ⭐ {business_data['rating']} ({business_data['total_reviews']} reviews)")
-                                    print(f"   📍 {business_data['address']}")
-                                    print(f"   📞 {business_data['phone']}")
-                                    print(f"   🌐 {business_data['website']}")
-                                    print(f"   🏷️  {business_data['category']}")
-                                    print("-" * 80)
-
-                                    # Save incrementally
-                                    with open("google_search_results.json", "w", encoding="utf-8") as f:
-                                        json.dump(all_businesses, f, indent=2, ensure_ascii=False)
-
-                                    with open("google_search_results.txt", "a", encoding="utf-8") as f:
-                                        f.write(str(business_data) + "\n")
-                                else:
-                                    print("⚠️ Could not extract data from search results")
-
-                            except Exception as e:
-                                print(f"❌ Error processing local listing {idx+1}: {e}")
-                                continue
-
-                        print("\n" + "=" * 80)
-                        print(f"✅ Scraping completed! Total scraped: {len(all_businesses)}")
-                        return all_businesses
-
-                except:
-                    continue
-
-        except:
-            print("❌ No local listings found either!")
-            return []
-
-    # Limit results
-    total_to_scrape = min(max_results, len(clickable_listings))
-
-    print(f"\n🎯 Will scrape {total_to_scrape} businesses...\n")
-    print("=" * 80)
-
     all_businesses = []
+    page_num = 1
+    max_pages = 100  # Safety limit to prevent infinite loops
 
-    for idx in range(total_to_scrape):
-        try:
-            # Re-find elements each time (stale element prevention)
-            current_listings = driver.find_elements(By.CSS_SELECTOR, clickable_selectors[0] if clickable_listings else 'a.vwVdIc')
+    while page_num <= max_pages:
+        print("\n" + "=" * 80)
+        print(f"📄 SCRAPING PAGE {page_num}")
+        print(f"📊 Current total: {len(all_businesses)}")
+        print("=" * 80 + "\n")
 
-            if idx >= len(current_listings):
-                print(f"⚠️ Ran out of listings at {idx}")
-                break
+        # Scrape current page
+        previous_count = len(all_businesses)
+        all_businesses = scrape_current_page(driver, all_businesses)
+        
+        # Check if any new results were added
+        new_results = len(all_businesses) - previous_count
+        print(f"\n✅ Scraped {new_results} new businesses from page {page_num}")
 
-            listing = current_listings[idx]
-
-            print(f"\n[{idx+1}/{total_to_scrape}] Clicking listing...")
-
-            # Scroll to element
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", listing)
-            time.sleep(1)
-
-            # Click the listing
-            try:
-                listing.click()
-            except:
-                # If regular click fails, use JavaScript
-                driver.execute_script("arguments[0].click();", listing)
-
-            time.sleep(randint(2, 4))
-
-            # Extract from detail panel
-            print("📊 Extracting data from detail panel...")
-            business_data = extract_detail_panel()
-
-            if business_data and business_data.get('name') != "N/A":
-                all_businesses.append(business_data)
-
-                print(f"✅ {business_data['name']}")
-                print(f"   ⭐ {business_data['rating']} ({business_data['total_reviews']} reviews)")
-                print(f"   📍 {business_data['address']}")
-                print(f"   📞 {business_data['phone']}")
-                print(f"   🌐 {business_data['website']}")
-                print(f"   🏷️  {business_data['category']}")
-                print(f"   💰 {business_data['price_range']}")
-                print("-" * 80)
-
-                # Save incrementally
-                with open("google_search_results.json", "w", encoding="utf-8") as f:
-                    json.dump(all_businesses, f, indent=2, ensure_ascii=False)
-
-                with open("google_search_results.txt", "a", encoding="utf-8") as f:
-                    f.write(str(business_data) + "\n")
-            else:
-                print("⚠️ Could not extract data from detail panel")
-
-            # Go back to search results
-            driver.back()
-            time.sleep(randint(2, 3))
-
-        except Exception as e:
-            print(f"❌ Error on listing {idx+1}: {e}")
-            # Try to go back to search results
-            try:
-                driver.back()
-                time.sleep(2)
-            except:
-                pass
-            continue
+        # Try to go to next page
+        print(f"\n🔄 Attempting to navigate to page {page_num + 1}...")
+        
+        if click_next_page(driver):
+            page_num += 1
+            print(f"✅ Successfully moved to page {page_num}")
+        else:
+            print("⚠️ No more pages available")
+            break
 
     print("\n" + "=" * 80)
-    print(f"✅ Scraping completed! Total scraped: {len(all_businesses)}")
+    print(f"✅ Scraping completed!")
+    print(f"📊 Total businesses scraped: {len(all_businesses)}")
+    print(f"📄 Total pages scraped: {page_num}")
+    print("=" * 80)
+    
     return all_businesses
 
 
@@ -790,25 +509,23 @@ def main():
         # ============= SETTINGS =============
         SEARCH_QUERY = "restaurants"
         LOCATION = "New York"
-        MAX_RESULTS = 20
         
         MIN_RATING = 0.0
         REQUIRE_PHONE = False
         REQUIRE_WEBSITE = False
         # ====================================
         
-        print("🚀 Google Search Business Scraper with Click Logic")
+        print("🚀 Google Search Multi-Page Business Scraper")
         print("=" * 80)
         print(f"🎯 Query: {SEARCH_QUERY}")
         print(f"📍 Location: {LOCATION}")
-        print(f"📊 Max Results: {MAX_RESULTS}")
+        print(f"♾️  Mode: UNLIMITED - Will scrape ALL available results!")
         print("=" * 80)
         
         # Scrape
         all_data = scrape_google_search(
             search_query=SEARCH_QUERY,
-            location=LOCATION,
-            max_results=MAX_RESULTS
+            location=LOCATION
         )
         
         # Filter
@@ -829,18 +546,19 @@ def main():
         print("\n" + "=" * 80)
         print("✅ DONE! Files saved:")
         print("   📄 google_search_results.json")
-        print("   📄 google_search_results.txt")
         if MIN_RATING > 0 or REQUIRE_PHONE or REQUIRE_WEBSITE:
             print("   📄 google_search_filtered.json")
         
         # Summary
-        print(f"\n📊 SUMMARY:")
-        print(f"   Total businesses scraped: {len(all_data)}")
+        print(f"\n📊 FINAL SUMMARY:")
+        print(f"   Total businesses: {len(all_data)}")
         if all_data:
             with_phone = sum(1 for b in all_data if b.get('phone') != 'N/A')
             with_website = sum(1 for b in all_data if b.get('website') != 'N/A')
-            print(f"   Businesses with phone: {with_phone}")
-            print(f"   Businesses with website: {with_website}")
+            avg_rating = sum(float(b.get('rating', '0').replace(',', '.')) for b in all_data if b.get('rating') != 'N/A') / len(all_data)
+            print(f"   With phone: {with_phone} ({with_phone/len(all_data)*100:.1f}%)")
+            print(f"   With website: {with_website} ({with_website/len(all_data)*100:.1f}%)")
+            print(f"   Average rating: {avg_rating:.2f}")
         
     except Exception as ex:
         print(f"❌ Error: {ex}")
