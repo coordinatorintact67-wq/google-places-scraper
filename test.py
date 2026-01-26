@@ -8,6 +8,9 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import time
 import json
 import re
+import csv
+import os
+from datetime import datetime
 
 # Chrome Options
 option = webdriver.ChromeOptions()
@@ -330,7 +333,11 @@ def scrape_current_page(driver, all_businesses):
 
             if business_data and business_data.get('name') != "N/A":
                 all_businesses.append(business_data)
-
+                global csv_filepath, fieldnames
+                with open(csv_filepath, 'a', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writerow(business_data)
+                print(f"Saved to CSV: {business_data['name']}")
                 print(f"✅ {business_data['name']}")
                 print(f"   ⭐ {business_data['rating']} ({business_data['total_reviews']} reviews)")
                 print(f"   📍 {business_data['address']}")
@@ -338,11 +345,6 @@ def scrape_current_page(driver, all_businesses):
                 print(f"   🌐 {business_data['website']}")
                 print(f"   🏷️  {business_data['category']}")
                 print("-" * 80)
-
-                # Save incrementally
-                with open("google_search_results.json", "w", encoding="utf-8") as f:
-                    json.dump(all_businesses, f, indent=2, ensure_ascii=False)
-
             else:
                 print("⚠️ Could not extract data")
 
@@ -514,6 +516,24 @@ def main():
         REQUIRE_PHONE = False
         REQUIRE_WEBSITE = False
         # ====================================
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        save_dir = os.path.join('GSearch Data', today)
+        os.makedirs(save_dir, exist_ok=True)
+
+        global csv_filepath, fieldnames, seen_businesses
+        csv_filename = f"google_search_results_{SEARCH_QUERY.replace(' ', '_')}_{LOCATION.replace(' ', '_')}"
+        csv_filepath = os.path.join(save_dir, f"{csv_filename}.csv")
+        counter = 1
+        while os.path.exists(csv_filepath):
+            csv_filepath = os.path.join(save_dir, f"{csv_filename}_{counter}.csv")
+            counter += 1
+
+        fieldnames = ['name', 'rating', 'total_reviews', 'category', 'address', 'phone', 'website', 'price_range', 'hours_status', 'google_maps_url']
+
+        with open(csv_filepath, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
         
         print("🚀 Google Search Multi-Page Business Scraper")
         print("=" * 80)
@@ -543,6 +563,7 @@ def main():
             with open("google_search_filtered.json", "w", encoding="utf-8") as f:
                 json.dump(filtered_data, f, indent=2, ensure_ascii=False)
         
+        print(f"\n📄 CSV saved incrementally to: {csv_filepath}")
         print("\n" + "=" * 80)
         print("✅ DONE! Files saved:")
         print("   📄 google_search_results.json")
