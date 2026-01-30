@@ -11,18 +11,39 @@ import re
 import csv
 import os
 from datetime import datetime
+import urllib.parse
 
 # Chrome Options
 option = webdriver.ChromeOptions()
 # option.add_argument("--headless")
-option.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+option.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 option.add_argument("--disable-blink-features=AutomationControlled")
 option.add_experimental_option("useAutomationExtension", False)
 option.add_argument('--disable-infobars')
 option.add_experimental_option("excludeSwitches", ["enable-automation"])
 option.add_argument("--start-maximized")
+option.add_argument("--disable-search-engine-choice-screen")
+option.add_argument("--disable-dev-shm-usage")
+option.add_argument("--no-sandbox")
+option.add_argument("--disable-gpu")
+option.add_argument("--disable-features=IsolateOrigins,site-per-process")
+# Suppress Errors and Noise
+option.add_argument("--log-level=3")
+option.add_argument("--silent")
+option.add_argument("--disable-logging")
+option.add_argument("--disable-background-networking")
+option.add_argument("--disable-sync")
+option.add_argument("--no-first-run")
+option.add_argument("--ignore-certificate-errors")
+option.add_argument("--ignore-ssl-errors")
+option.add_argument("--allow-running-insecure-content")
 
 driver = webdriver.Chrome(options=option)
+driver.set_page_load_timeout(60)
+# Hide automation flag
+driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+    "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+})
 wait = WebDriverWait(driver, 10)
 
 
@@ -427,7 +448,10 @@ def scrape_google_search(search_query, location=""):
     else:
         query = search_query
 
-    search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}&udm=1"
+    driver.get("https://www.google.com")
+    time.sleep(2)
+
+    search_url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}&udm=1"
 
     print(f"\n🔍 Searching: {query}")
     print(f"🌐 URL: {search_url}")
@@ -436,13 +460,25 @@ def scrape_google_search(search_query, location=""):
     driver.get(search_url)
     time.sleep(5)
 
-    # Handle consent
-    try:
-        consent = driver.find_element(By.XPATH, "//button[contains(., 'Accept all') or contains(., 'Reject all')]")
-        consent.click()
-        time.sleep(2)
-    except:
-        pass
+    # Handle consent - Improved
+    print(f"DEBUG: Checking for consent/popups...")
+    consent_button_locators = [
+        (By.XPATH, "//button[contains(., 'Accept all')]"),
+        (By.XPATH, "//button[contains(., 'Reject all')]"),
+        (By.XPATH, "//button[contains(., 'I agree')]"),
+        (By.ID, "L2AGLb"),
+    ]
+    
+    for by, val in consent_button_locators:
+        try:
+            btn = driver.find_element(by, val)
+            if btn.is_displayed():
+                btn.click()
+                print(f"DEBUG: Clicked consent button: {val}")
+                time.sleep(2)
+                break
+        except:
+            continue
 
     all_businesses = []
     page_num = 1
