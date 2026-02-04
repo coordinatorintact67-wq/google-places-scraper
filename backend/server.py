@@ -12,11 +12,13 @@ from scraper import scrape_google_search
 from pathlib import Path
 import json
 import time
+import zipfile
+import io
 
 app = FastAPI(title="Google Places Scraper API")
 
 print("\n" + "#"*50)
-print("### VERSION 2.0 - ACTIVE-JOB ROUTE INCLUDED ###")
+print("### VERSION 3.0 - DOWNLOAD-ALL ROUTE INCLUDED ###")
 print("#"*50 + "\n")
 
 # CORS Configuration
@@ -141,10 +143,61 @@ class FileInfo(BaseModel):
     filename: str
     size: int
     created: str
+    completed: str
     status: str = "complete"
 
 class HealthResponse(BaseModel):
     status: str
+
+@app.get("/api/test-route")
+async def test_route():
+    return {"message": "Server is running the LATEST code version 3.0"}
+
+@app.get("/api/download-all-csv")
+async def download_all_merged_csv():
+    """Download all results merged into a single CSV file"""
+    print("DEBUG: download_all_merged_csv route triggered")
+    try:
+        # Get list of files currently being processed
+        active_files = set()
+        for job in job_status.values():
+            if job.get('status') in ['processing', 'queued']:
+                if job.get('current_csv_file'):
+                    active_files.add(job.get('current_csv_file'))
+
+        output = io.StringIO()
+        fieldnames = ['name', 'rating', 'total_reviews', 'category', 'address',
+                     'phone', 'website', 'price_range', 'hours_status', 'google_maps_url']
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+
+        files_added = 0
+        for filename in os.listdir(CSV_OUTPUT_DIR):
+            if filename.endswith('.csv') and filename not in active_files and not filename.endswith('_EMPTY.csv'):
+                filepath = os.path.join(CSV_OUTPUT_DIR, filename)
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        reader = csv.DictReader(f)
+                        for row in reader:
+                            writer.writerow(row)
+                    files_added += 1
+                except Exception as fe:
+                    print(f"Error reading {filename}: {fe}")
+
+        if files_added == 0:
+            raise HTTPException(status_code=404, detail="No data available to merge. Generate some results first!")
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=merged_results_{timestamp}.csv"}
+        )
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        print(f"Error merging CSVs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # API Routes
 
@@ -190,12 +243,34 @@ def process_multiple_queries(job_id: str, queries: List[str], location: str):
                 job_status[job_id]['current_query'] = query
                 job_status[job_id]['current_query_index'] = idx + 1
 
-                # Create CSV file
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                safe_query = "".join([c if c.isalnum() else "_" for c in query.strip()])
-                safe_location = "".join([c if c.isalnum() else "_" for c in location.strip()])
-                csv_filename = f"{safe_query}_{safe_location}_{timestamp}.csv"
+                # Create CSV file with incremental numbering if file exists and use readable format with spaces
+                # Clean the query and location strings to make them more readable
+                # Replace non-alphanumeric characters with spaces for readability
+                safe_query = "".join([c if c.isalnum() else " " for c in query.strip()])
+                safe_location = "".join([c if c.isalnum() else " " for c in location.strip()])
+
+                # Clean up multiple spaces and strip whitespace
+                safe_query = " ".join(safe_query.split()).strip()
+                safe_location = " ".join(safe_location.split()).strip()
+
+                # Create base filename using spaces between words as requested
+                base_parts = []
+                if safe_query:
+                    base_parts.append(safe_query)
+                if safe_location:
+                    base_parts.append(safe_location)
+
+                base_filename = " ".join(base_parts).strip()
+
+                # Find the next available number for this filename
+                counter = 1
+                csv_filename = f"{base_filename} {counter}.csv"
                 csv_filepath = os.path.join(CSV_OUTPUT_DIR, csv_filename)
+
+                while os.path.exists(csv_filepath):
+                    counter += 1
+                    csv_filename = f"{base_filename} {counter}.csv"
+                    csv_filepath = os.path.join(CSV_OUTPUT_DIR, csv_filename)
 
                 # IMPORTANT: Set active CSV file for frontend tracking
                 job_status[job_id]['current_csv_file'] = csv_filename
@@ -203,11 +278,16 @@ def process_multiple_queries(job_id: str, queries: List[str], location: str):
 
                 # Initialize CSV
                 fieldnames = ['name', 'rating', 'total_reviews', 'category', 'address',
-                             'phone', 'website', 'price_range', 'hours_status', 'google_maps_url']
+                             'phone', 'website', 'price_range', 'hours_status', 'google_maps_url', 'search_location']
 
                 with open(csv_filepath, 'w', newline='', encoding='utf-8') as csvfile:
                     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                     writer.writeheader()
+                
+                # Mark the START TIME using access time (atime)
+                # This ensures list_files can distinguish start from finish
+                start_time = time.time()
+                os.utime(csv_filepath, (start_time, start_time))
 
                 # Scrape data
                 print(f"DEBUG: Calling scraper for query: '{query.strip()}' in location: '{location}'")
@@ -226,14 +306,34 @@ def process_multiple_queries(job_id: str, queries: List[str], location: str):
 
                 if not all_data:
                     # If no results found, tag the file as NO_RESULTS
-                    new_filename = csv_filename.replace(".csv", "_EMPTY.csv")
-                    new_filepath = os.path.join(CSV_OUTPUT_DIR, new_filename)
+                    # First, get the base filename without the counter
+                    # For space-separated format: "barber in USA 1.csv" -> "barber in USA"
+                    parts = csv_filename.rsplit(' ', 1)  # Split on the last space
+                    if len(parts) > 1 and parts[1].replace('.csv', '').isdigit():
+                        base_part = parts[0]  # "barber in USA"
+                    else:
+                        base_part = csv_filename.replace('.csv', '')  # Fallback
+
+                    new_filename = f"{base_part} EMPTY.csv"
+
+                    # If that name already exists, find the next available number
+                    counter = 1
+                    final_filename = new_filename
+                    final_filepath = os.path.join(CSV_OUTPUT_DIR, final_filename)
+
+                    while os.path.exists(final_filepath):
+                        final_filename = f"{base_part} EMPTY {counter}.csv"
+                        final_filepath = os.path.join(CSV_OUTPUT_DIR, final_filename)
+                        counter += 1
+
                     try:
                         if os.path.exists(csv_filepath):
-                            os.rename(csv_filepath, new_filepath)
-                            csv_filename = new_filename
+                            os.rename(csv_filepath, final_filepath)
+                            csv_filename = final_filename
                     except Exception as re:
                         print(f"Error renaming empty CSV: {re}")
+                        # If rename fails, keep the original filename
+                        pass
 
                 # Check again if termination was requested before saving results
                 if termination_flags.get(job_id):
@@ -462,7 +562,8 @@ async def list_files():
                 files.append(FileInfo(
                     filename=filename,
                     size=stat.st_size,
-                    created=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    created=datetime.fromtimestamp(stat.st_ctime).isoformat(),  # Use CTIME for Creation/Start
+                    completed=datetime.fromtimestamp(stat.st_mtime).isoformat(), # Use MTIME for Completion/Last Modified
                     status=status
                 ))
 
@@ -521,6 +622,46 @@ async def clear_job_status(job_id: str):
             # Continue anyway, as the in-memory removal worked
 
     return {"message": "Job status cleared", "job_id": job_id}
+
+
+@app.get("/api/download-all")
+async def download_all_zip():
+    """Download all CSV files as a ZIP archive"""
+    try:
+        # Get list of files currently being processed
+        active_files = set()
+        for job in job_status.values():
+            if job.get('status') in ['processing', 'queued']:
+                if job.get('current_csv_file'):
+                    active_files.add(job.get('current_csv_file'))
+
+        # Create ZIP in memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            files_added = 0
+            for filename in os.listdir(CSV_OUTPUT_DIR):
+                if filename.endswith('.csv') and filename not in active_files:
+                    filepath = os.path.join(CSV_OUTPUT_DIR, filename)
+                    zip_file.write(filepath, filename)
+                    files_added += 1
+        
+        if files_added == 0:
+            raise HTTPException(status_code=404, detail="No files to download")
+
+        zip_buffer.seek(0)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return Response(
+            content=zip_buffer.getvalue(),
+            media_type="application/x-zip-compressed",
+            headers={"Content-Disposition": f"attachment; filename=all_results_{timestamp}.zip"}
+        )
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        print(f"Error creating zip: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 
 @app.delete("/api/delete-all-csv")

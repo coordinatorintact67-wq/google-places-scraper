@@ -56,11 +56,12 @@ export default function Home() {
     } catch (error: any) {
       console.error("Polling error:", error);
 
-      // If job is not found (404), server might have restarted
-      if (error.message?.includes('404')) {
-        setCurrentJob(prev => prev ? { ...prev, status: 'failed', error: 'Job lost (Server might have restarted)' } : null);
+      // If job is not found (404), server might have restarted or job was cleared
+      if (error.message?.includes('(404)') || error.message?.includes('404')) {
+        setCurrentJob(prev => prev ? { ...prev, status: 'failed', error: 'Job lost (Server might have restarted or job was cleared)' } : null);
         stopPolling();
         setIsScraping(false);
+        loadFiles(); // Reload files since the job is gone
       } else {
         // For other errors, keep polling but update health
         setApiHealth(false);
@@ -157,11 +158,20 @@ export default function Home() {
               // Continue polling until the status changes
               setTimeout(pollForTermination, 1000);
             }
-          } catch (error) {
+          } catch (error: any) {
             console.error("Error polling for termination:", error);
-            stopPolling();
-            setIsScraping(false);
-            showNotification('Error checking job status after termination', 'error');
+
+            // Handle 404 errors when job is not found after termination
+            if (error.message?.includes('(404)') || error.message?.includes('404')) {
+                stopPolling();
+                setIsScraping(false);
+                loadFiles(); // Reload files since the job is gone
+                showNotification('Job status cleared after termination', 'info');
+            } else {
+                stopPolling();
+                setIsScraping(false);
+                showNotification('Error checking job status after termination', 'error');
+            }
           }
         };
 
