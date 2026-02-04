@@ -77,191 +77,192 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
         )
             
         if rating_already_extracted:
-            print(f"DEBUG: Rating/reviews already extracted from listing card: {business_data['rating']}({business_data['total_reviews']}), preserving these values")
+            print(f"DEBUG: Rating/reviews already extracted from listing card: {business_data['rating']}({business_data['total_reviews']}), SKIPPING detail panel extraction")
+            rating_found = True  # Mark as found to skip all extraction attempts
         else:
+            # Only extract from detail panel if NOT already extracted from listing card
             business_data['rating'] = "N/A"
             business_data['total_reviews'] = "N/A"
+            rating_found = False
 
-        rating_found = rating_already_extracted  # If already have rating, mark as found
+            # Add a small wait to ensure page is fully loaded after click
+            time.sleep(0.5)
 
-        # Add a small wait to ensure page is fully loaded after click
-        time.sleep(0.5)
-
-        # First, let's try to find the business name element and then look for rating/reviews nearby
-        # This ensures we get data from the same business box
-        name_element = None
-        name_selectors = [
-            'h1.DUwDvf',  # Main business name
-            'h2.qrShPb',
-            'div.SPZz6b h1',
-            'div.SPZz6b h2',
-            '[role="banner"] h1',
-            '.rG09U',
-            '.H07f0c'
-        ]
-
-        # Find the name element first
-        for selector in name_selectors:
-            try:
-                name_element = driver.find_element(By.CSS_SELECTOR, selector)
-                name_text = name_element.text.strip()
-                if name_text and name_text != "N/A":
-                    print(f"DEBUG: Found business name element with text: {name_text}")
-                    break
-            except:
-                continue
-
-        # Now look for rating and reviews in the same general area/parent as the name
-        if name_element:
-            try:
-                # Start from the name element and look in its vicinity
-                name_parent = name_element.find_element(By.XPATH, './..')  # Immediate parent
-                nearby_text = name_parent.text.strip()
-
-                print(f"DEBUG: Text near name element: {nearby_text[:100]}...")  # First 100 chars
-
-                # Look for rating (review_count) pattern in the same area as the name
-                pattern = r'(\d+\.?\d{1,2})\s*\(\s*(\d{1,3}(?:,\d{3})*(?:\s*[KMB])?|\d+[KMB]?)\s*\)'
-                match = re.search(pattern, nearby_text, re.IGNORECASE)
-
-                if match:
-                    rating_val = match.group(1)
-                    reviews_val = match.group(2).replace(',', '').strip()
-
-                    try:
-                        rating_float = float(rating_val)
-                        if 0.0 <= rating_float <= 5.0:
-                            business_data['rating'] = str(rating_float)
-                            business_data['total_reviews'] = reviews_val
-                            rating_found = True
-                            print(f"DEBUG: SUCCESS - Found paired rating and reviews near name: {rating_val} ({reviews_val})")
-                    except ValueError:
-                        print(f"DEBUG: Rating {rating_val} is not a valid float")
-                else:
-                    print(f"DEBUG: No rating(review) pattern found near name element")
-
-            except Exception as e:
-                print(f"DEBUG: Error looking near name element: {e}")
-
-        # If the name-area approach didn't work, try the specific element approach you provided
-        if not rating_found:
-            try:
-                # Look for the Y0A0hc container which should be near the name
-                wait = WebDriverWait(driver, 3)
-                rating_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.Y0A0hc')))
-
-                # Verify this container is in the same area as the name by checking proximity
-                container_text = rating_container.text.strip()
-                print(f"DEBUG: Found Y0A0hc container text: {container_text}")
-
-                # Look for the pattern "rating (review_count)" like "5.0 (478)" in the same container
-                pattern = r'(\d+\.?\d{1,2})\s*\(\s*(\d{1,3}(?:,\d{3})*(?:\s*[KMB])?|\d+[KMB]?)\s*\)'
-                match = re.search(pattern, container_text, re.IGNORECASE)
-
-                if match:
-                    rating_val = match.group(1)
-                    reviews_val = match.group(2).replace(',', '').strip()
-
-                    try:
-                        rating_float = float(rating_val)
-                        if 0.0 <= rating_float <= 5.0:
-                            business_data['rating'] = str(rating_float)
-                            business_data['total_reviews'] = reviews_val
-                            rating_found = True
-                            print(f"DEBUG: SUCCESS - Found paired rating and reviews from Y0A0hc: {rating_val} ({reviews_val})")
-                    except ValueError:
-                        print(f"DEBUG: Rating {rating_val} is not a valid float")
-                else:
-                    print(f"DEBUG: No rating(review) pattern found in Y0A0hc container")
-
-            except TimeoutException:
-                print("DEBUG: Y0A0hc container not found or not loaded in time")
-            except:
-                print("DEBUG: Could not find span.Y0A0hc container")
-
-        # Fallback to F7nice container
-        if not rating_found:
-            try:
-                wait = WebDriverWait(driver, 3)
-                rating_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div.F7nice')))
-                container_text = rating_container.text.strip()
-
-                print(f"DEBUG: Found F7nice container text: {container_text}")
-
-                # Look for the exact pattern "rating (review_count)" like "4.9 (855)"
-                pattern = r'(\d+\.?\d{1,2})\s*\(\s*(\d{1,3}(?:,\d{3})*(?:\s*[KMB])?|\d+[KMB]?)\s*\)'
-                match = re.search(pattern, container_text, re.IGNORECASE)
-
-                if match:
-                    rating_val = match.group(1)
-                    reviews_val = match.group(2).replace(',', '').strip()
-
-                    try:
-                        rating_float = float(rating_val)
-                        if 0.0 <= rating_float <= 5.0:
-                            business_data['rating'] = str(rating_float)
-                            business_data['total_reviews'] = reviews_val
-                            rating_found = True
-                            print(f"DEBUG: SUCCESS - Found paired rating and reviews from F7nice: {rating_val} ({reviews_val})")
-                    except ValueError:
-                        print(f"DEBUG: Rating {rating_val} is not a valid float")
-                else:
-                    print(f"DEBUG: No rating(review) pattern found in F7nice container")
-
-            except TimeoutException:
-                print("DEBUG: F7nice container not found or not loaded in time")
-            except:
-                print("DEBUG: Could not find div.F7nice container")
-
-        # Final fallback
-        if not rating_found:
-            print("DEBUG: Falling back to general selectors")
-
-            # Try to find rating with waits
-            rating_selectors = [
-                'span.Aq14fc',
-                'span.ceNzKf[aria-hidden="true"]',
-                'span.gsrt.By079',
-                'div.F7nice span[aria-hidden="true"]',
-                'span.yi40Hd.YrbPuc[aria-hidden="true"]'
+            # First, let's try to find the business name element and then look for rating/reviews nearby
+            # This ensures we get data from the same business box
+            name_element = None
+            name_selectors = [
+                'h1.DUwDvf',  # Main business name
+                'h2.qrShPb',
+                'div.SPZz6b h1',
+                'div.SPZz6b h2',
+                '[role="banner"] h1',
+                '.rG09U',
+                '.H07f0c'
             ]
 
-            for selector in rating_selectors:
+            # Find the name element first
+            for selector in name_selectors:
                 try:
-                    wait = WebDriverWait(driver, 2)
-                    rating_elem = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-                    rating_text = rating_elem.text.strip()
-
-                    if rating_text and rating_text.replace('.', '').isdigit():
-                        try:
-                            rating_float = float(rating_text)
-                            if 0.0 <= rating_float <= 5.0:
-                                business_data['rating'] = str(rating_float)
-                                print(f"DEBUG: Found rating separately: {rating_text}")
-                                break
-                        except ValueError:
-                            continue
-                except TimeoutException:
-                    continue
+                    name_element = driver.find_element(By.CSS_SELECTOR, selector)
+                    name_text = name_element.text.strip()
+                    if name_text and name_text != "N/A":
+                        print(f"DEBUG: Found business name element with text: {name_text}")
+                        break
                 except:
                     continue
 
-            # Try to find reviews
-            try:
-                wait = WebDriverWait(driver, 2)
-                review_elem = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.RDApEe.YrbPuc[role="text"]')))
-                review_text = review_elem.text.strip()
+            # Now look for rating and reviews in the same general area/parent as the name
+            if name_element and not rating_found:
+                try:
+                    # Start from the name element and look in its vicinity
+                    name_parent = name_element.find_element(By.XPATH, './..')  # Immediate parent
+                    nearby_text = name_parent.text.strip()
 
-                # Extract the number from parentheses like "(478)"
-                paren_match = re.search(r'\((\d{1,3}(?:,\d{3})*(?:\s*[KMB])?|\d+[KMB]?)\)', review_text, re.IGNORECASE)
-                if paren_match:
-                    reviews_val = paren_match.group(1).replace(',', '').strip()
-                    business_data['total_reviews'] = reviews_val
-                    print(f"DEBUG: Found reviews from specific element: {reviews_val}")
-            except TimeoutException:
-                print("DEBUG: Review element not found or not loaded in time")
-            except:
-                print("DEBUG: Could not find review element")
+                    print(f"DEBUG: Text near name element: {nearby_text[:100]}...")  # First 100 chars
+
+                    # Look for rating (review_count) pattern in the same area as the name
+                    pattern = r'(\d+\.?\d*)\s*\(\s*(\d+\.?\d*\s*[KMB]?|\d{1,3}(?:,\d{3})*)\s*\)'
+                    match = re.search(pattern, nearby_text, re.IGNORECASE)
+
+                    if match:
+                        rating_val = match.group(1)
+                        reviews_val = match.group(2).replace(',', '').strip()
+
+                        try:
+                            rating_float = float(rating_val)
+                            if 0.0 <= rating_float <= 5.0:
+                                business_data['rating'] = str(rating_float)
+                                business_data['total_reviews'] = reviews_val
+                                rating_found = True
+                                print(f"DEBUG: SUCCESS - Found paired rating and reviews near name: {rating_val} ({reviews_val})")
+                        except ValueError:
+                            print(f"DEBUG: Rating {rating_val} is not a valid float")
+                    else:
+                        print(f"DEBUG: No rating(review) pattern found near name element")
+
+                except Exception as e:
+                    print(f"DEBUG: Error looking near name element: {e}")
+
+            # If the name-area approach didn't work, try the specific element approach you provided
+            if not rating_found:
+                try:
+                    # Look for the Y0A0hc container which should be near the name
+                    wait = WebDriverWait(driver, 3)
+                    rating_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.Y0A0hc')))
+
+                    # Verify this container is in the same area as the name by checking proximity
+                    container_text = rating_container.text.strip()
+                    print(f"DEBUG: Found Y0A0hc container text: {container_text}")
+
+                    # Look for the pattern "rating (review_count)" like "5.0 (478)" in the same container
+                    pattern = r'(\d+\.?\d*)\s*\(\s*(\d+\.?\d*\s*[KMB]?|\d{1,3}(?:,\d{3})*)\s*\)'
+                    match = re.search(pattern, container_text, re.IGNORECASE)
+
+                    if match:
+                        rating_val = match.group(1)
+                        reviews_val = match.group(2).replace(',', '').strip()
+
+                        try:
+                            rating_float = float(rating_val)
+                            if 0.0 <= rating_float <= 5.0:
+                                business_data['rating'] = str(rating_float)
+                                business_data['total_reviews'] = reviews_val
+                                rating_found = True
+                                print(f"DEBUG: SUCCESS - Found paired rating and reviews from Y0A0hc: {rating_val} ({reviews_val})")
+                        except ValueError:
+                            print(f"DEBUG: Rating {rating_val} is not a valid float")
+                    else:
+                        print(f"DEBUG: No rating(review) pattern found in Y0A0hc container")
+
+                except TimeoutException:
+                    print("DEBUG: Y0A0hc container not found or not loaded in time")
+                except:
+                    print("DEBUG: Could not find span.Y0A0hc container")
+
+            # Fallback to F7nice container
+            if not rating_found:
+                try:
+                    wait = WebDriverWait(driver, 3)
+                    rating_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div.F7nice')))
+                    container_text = rating_container.text.strip()
+
+                    print(f"DEBUG: Found F7nice container text: {container_text}")
+
+                    # Look for the exact pattern "rating (review_count)" like "4.9 (855)"
+                    pattern = r'(\d+\.?\d*)\s*\(\s*(\d+\.?\d*\s*[KMB]?|\d{1,3}(?:,\d{3})*)\s*\)'
+                    match = re.search(pattern, container_text, re.IGNORECASE)
+
+                    if match:
+                        rating_val = match.group(1)
+                        reviews_val = match.group(2).replace(',', '').strip()
+
+                        try:
+                            rating_float = float(rating_val)
+                            if 0.0 <= rating_float <= 5.0:
+                                business_data['rating'] = str(rating_float)
+                                business_data['total_reviews'] = reviews_val
+                                rating_found = True
+                                print(f"DEBUG: SUCCESS - Found paired rating and reviews from F7nice: {rating_val} ({reviews_val})")
+                        except ValueError:
+                            print(f"DEBUG: Rating {rating_val} is not a valid float")
+                    else:
+                        print(f"DEBUG: No rating(review) pattern found in F7nice container")
+
+                except TimeoutException:
+                    print("DEBUG: F7nice container not found or not loaded in time")
+                except:
+                    print("DEBUG: Could not find div.F7nice container")
+
+            # Final fallback
+            if not rating_found:
+                print("DEBUG: Falling back to general selectors")
+
+                # Try to find rating with waits
+                rating_selectors = [
+                    'span.Aq14fc',
+                    'span.ceNzKf[aria-hidden="true"]',
+                    'span.gsrt.By079',
+                    'div.F7nice span[aria-hidden="true"]',
+                    'span.yi40Hd.YrbPuc[aria-hidden="true"]'
+                ]
+
+                for selector in rating_selectors:
+                    try:
+                        wait = WebDriverWait(driver, 2)
+                        rating_elem = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+                        rating_text = rating_elem.text.strip()
+
+                        if rating_text and rating_text.replace('.', '').isdigit():
+                            try:
+                                rating_float = float(rating_text)
+                                if 0.0 <= rating_float <= 5.0:
+                                    business_data['rating'] = str(rating_float)
+                                    print(f"DEBUG: Found rating separately: {rating_text}")
+                                    break
+                            except ValueError:
+                                continue
+                    except TimeoutException:
+                        continue
+                    except:
+                        continue
+
+                # Try to find reviews
+                try:
+                    wait = WebDriverWait(driver, 2)
+                    review_elem = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.RDApEe.YrbPuc[role="text"]')))
+                    review_text = review_elem.text.strip()
+
+                    # Extract the number from parentheses like "(478)"
+                    paren_match = re.search(r'\((\d+\.?\d*\s*[KMB]?|\d{1,3}(?:,\d{3})*)\)', review_text, re.IGNORECASE)
+                    if paren_match:
+                        reviews_val = paren_match.group(1).replace(',', '').strip()
+                        business_data['total_reviews'] = reviews_val
+                        print(f"DEBUG: Found reviews from specific element: {reviews_val}")
+                except TimeoutException:
+                    print("DEBUG: Review element not found or not loaded in time")
+                except:
+                    print("DEBUG: Could not find review element")
 
         # Ensure both rating and reviews are properly set
         if business_data['rating'] == "N/A":
@@ -274,40 +275,94 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
         else:
             print(f"DEBUG: Reviews successfully extracted: {business_data['total_reviews']}")
 
-        if not rating_found:
-            business_data['rating'] = "N/A"
-            print("DEBUG: No rating found, setting to N/A")
-        else:
-            print(f"DEBUG: Rating successfully extracted: {business_data['rating']}")
-            print(f"DEBUG: Reviews successfully extracted: {business_data['total_reviews']}")
 
-        # Reviews extraction is now handled together with rating, so we just ensure it's set
-        if 'total_reviews' not in business_data:
-            business_data['total_reviews'] = "N/A"
-            print("DEBUG: No reviews found, setting to N/A")
-        elif business_data['total_reviews'] != "N/A":
-            print(f"DEBUG: Reviews successfully extracted: {business_data['total_reviews']}")
-        else:
-            print("DEBUG: No reviews found, setting to N/A")
-
-        # Category/Type
+        # Category/Type - ALWAYS extract from detail panel (after clicking)
+        # Do NOT preserve from listing card - we want the accurate category from detail page
+        
+        # Priority order - span.YhemCb is most common for categories
         category_selectors = [
+            'div.zloOqf span.YhemCb',  # Specific parent from user example
+            'div.MaBy9 span.YhemCb',   # Another common parent
+            'span.YhemCb',             # Generic fallback
             'button.DkEaL',
-            'span.YhemCb',
             'div.LBgpqf button',
-            'div.PZPZ1c span:nth-of-type(1)'
+            'div.PZPZ1c span:nth-of-type(1)',
+            'span[class*="YhemCb"]',
+            'button[jsaction*="category"]',
+            'span.mgr77e',
+            'div.fontBodyMedium button',
+            'span[class*="fontBody"]',
+            'div.RWPxGd button',
+            'button[class*="DkEaL"]',
+            'div[jsaction*="category"] button',
+            'div.LBgpqf span',
+            '[aria-label*="Categories"]',
+            'div > button:first-of-type'
         ]
 
         for selector in category_selectors:
             try:
-                category = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
-                if category and len(category) < 50:
+                # Use find_elements to catch ALL matches
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                found_valid_category = False
+                
+                # Check up to 5 elements
+                for category_elem in elements[:5]:
+                    raw_text = category_elem.text.strip()
+                    # Also try aria-label if text is empty
+                    if not raw_text:
+                        raw_text = category_elem.get_attribute('aria-label') or ''
+                        raw_text = raw_text.strip()
+                    
+                    if not raw_text:
+                        continue
+
+                    # CHECK 1: Is it just a price, rating, or number? (e.g. "$50-100", "4.8", "(500)")
+                    # If it contains NO letters, it's not a category. (Categories names have letters)
+                    if not any(c.isalpha() for c in raw_text):
+                        continue
+                        
+                    # CHECK 2: Is it a common functional button?
+                    if any(x in raw_text.lower() for x in ['phone', 'website', 'address', 'open', 'close', 'menu', 'copy', 'send to']):
+                         if len(raw_text) < 20: # Long text might contain these words legitimately
+                             continue
+
+                    # CLEANING: Remove ratings, prices, etc.
+                    category = raw_text
+                    
+                    # Remove rating patterns "4.0(1K)"
+                    category = re.sub(r'\d+\.?\d*\s*\(\s*\d+\.?\d*\s*[KMB]?\s*\)', '', category)
+                    # Remove price patterns "$$", "$50-100"
+                    category = re.sub(r'\$+\s*\d*[-–—]?\s*\d*\+?', '', category)
+                    category = re.sub(r'\$+', '', category)
+                    # Remove separators
+                    category = re.sub(r'[·•]|Â·|â€¢', ' ', category)
+                    
+                    # Clean up spaces
+                    category = ' '.join(category.split())
+                    
+                    # If cleaning left us with nothing (or just symbols), skip
+                    if not category or len(category) < 2:
+                        continue
+
+                    # If we survived, this is likely the category
+                    # Take the last part if leftovers exist (e.g. "Restaurant")
+                    parts = category.split()
+                    # But don't split if it looks like a multi-word category "French restaurant"
+                    # Just keep the cleaned string.
+                    
                     business_data['category'] = category
+                    print(f"DEBUG: Extracted category from detail panel using '{selector}': {category}")
+                    found_valid_category = True
                     break
-            except:
+                
+                if found_valid_category:
+                    break
+                    
+            except Exception as e:
                 continue
 
-        if 'category' not in business_data:
+        if 'category' not in business_data or business_data['category'] == "N/A":
             business_data['category'] = "N/A"
 
         # Address
@@ -491,10 +546,25 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
 
 def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, location, termination_flag=None):
     """Scrape listings from the current search results page"""
-    wait = WebDriverWait(driver, 8)  # Reduced from 15 to 8 seconds
-
+    wait = WebDriverWait(driver, 5)  # Reduced from 8 to 5 seconds for faster failure
+    
     # Check termination before starting
     if termination_flag and termination_flag():
+        return all_businesses
+    
+    # Validate URL - check if we're still on a valid search page
+    current_url = driver.current_url
+    invalid_urls = [
+        'support.google.com',
+        'accounts.google.com', 
+        'policies.google.com',
+        'google.com/sorry',
+        'google.com/webhp'
+    ]
+    
+    if any(invalid in current_url for invalid in invalid_urls):
+        print(f"[ERROR] Detected invalid page during scraping: {current_url}")
+        print(f"[ERROR] Stopping scrape - may be redirected or blocked")
         return all_businesses
 
     # Handle consent if appears
@@ -504,7 +574,7 @@ def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, locati
             return all_businesses
         consent = driver.find_element(By.XPATH, "//button[contains(., 'Accept all') or contains(., 'Reject all')]")
         consent.click()
-        time.sleep(1)  # Reduced from 2 to 1 second
+        time.sleep(0.5)  # Reduced from 1 to 0.5 second
     except:
         pass
 
@@ -568,9 +638,9 @@ def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, locati
 
             # CLICK AND EXTRACT
             # 1. Capture basic info from listing first (fallback)
-            listing_data = {'name': 'N/A', 'address': 'N/A', 'rating': 'N/A', 'total_reviews': 'N/A'}
+            listing_data = {'name': 'N/A', 'address': 'N/A', 'rating': 'N/A', 'total_reviews': 'N/A', 'category': 'N/A'}
             try:
-                # Try to find name/address/rating/reviews in the result card before clicking
+                # Try to find name/address/rating/reviews/category in the result card before clicking
                 card_text = listing.text
                 if card_text:
                     lines = [line.strip() for line in card_text.split('\n') if line.strip()]
@@ -578,7 +648,7 @@ def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, locati
                         listing_data['name'] = lines[0] # Often the first line is the name
                     
                     # Extract rating and reviews from the card text (e.g., "4.8(312)")
-                    pattern = r'(\d+\.?\d{0,2})\s*\(\s*(\d{1,3}(?:,\d{3})*(?:\s*[KMB])?|\d+[KMB]?)\s*\)'
+                    pattern = r'(\d+\.?\d*)\s*\(\s*(\d+\.?\d*\s*[KMB]?|\d{1,3}(?:,\d{3})*)\s*\)'
                     match = re.search(pattern, card_text, re.IGNORECASE)
                     if match:
                         rating_val = match.group(1)
@@ -591,9 +661,32 @@ def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, locati
                                 print(f"DEBUG: Extracted from listing card - Rating: {rating_val}, Reviews: {reviews_val}")
                         except ValueError:
                             pass
+                    
+                    # CATEGORY EXTRACTION DISABLED FROM LISTING CARD
+                    # We only want category from the DETAIL PANEL after clicking
+                    # Not from the listing preview (which may show generic terms like "Dentist")
+                    
+                    # Pattern 2: DISABLED - If not found, try looking at lines directly
+                    # if listing_data['category'] == 'N/A' and len(lines) > 1:
+                    #     for line in lines[1:4]:  # Check lines 2-4
+                    #         # Common category keywords
+                    #         category_indicators = ['shop', 'store', 'restaurant', 'bar', 'cafe', 'salon', 'service', 
+                    #                               'center', 'clinic', 'hospital', 'hotel', 'gym', 'studio', 'office',
+                    #                               'company', 'agency', 'firm', 'market', 'bakery', 'lounge', 'club']
+                    #         if any(indicator in line.lower() for indicator in category_indicators):
+                    #             # Make sure it's not an address or other data
+                    #             if not any(x in line.lower() for x in ['street', 'st,', 'ave', 'road', 'rd,', 'blvd', 'united states', 'open', 'close', '+1 ', 'http']):
+                    #                 if len(line) < 50:
+                    #                     listing_data['category'] = line
+                    #                     print(f"DEBUG: Extracted category from listing card (pattern 2): {line}")
+                    #                     break
             except Exception as e:
                 print(f"DEBUG: Error extracting from listing card: {e}")
                 pass
+            
+            # Pattern 3: DISABLED - Try to find category element directly in the listing
+            # We only want category from detail panel, not from listing preview
+
 
             # Scroll into view
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", listing)
@@ -860,7 +953,38 @@ def scrape_google_search(search_query, location="", csv_filepath="", fieldnames=
             print(f"[TERMINATION] Job terminated after navigation for query: {search_query}")
             return []
 
-        time.sleep(3)  # Reduced from 5 to 3 seconds
+        time.sleep(2)  # Reduced from 3 to 2 seconds
+        
+        # Validate URL - check if we're on a valid search page
+        current_url = driver.current_url
+        invalid_urls = [
+            'support.google.com',
+            'accounts.google.com',
+            'policies.google.com',
+            'google.com/sorry',
+            'google.com/webhp',
+            'google.com/preferences'
+        ]
+        
+        if any(invalid in current_url for invalid in invalid_urls):
+            print(f"[ERROR] Redirected to invalid page: {current_url}")
+            print(f"[ERROR] Google may have blocked the request or there are no results")
+            return []
+        
+        # Check for "no results" message
+        try:
+            no_results_indicators = [
+                "did not match any documents",
+                "No results found",
+                "Try different keywords",
+                "did not match any places"
+            ]
+            page_text = driver.find_element(By.TAG_NAME, 'body').text
+            if any(indicator in page_text for indicator in no_results_indicators):
+                print(f"[WARNING] No results found for query: {query}")
+                return []
+        except:
+            pass
 
         # Handle consent - Improved from test.py
         print(f"DEBUG: Checking for consent/popups...")
