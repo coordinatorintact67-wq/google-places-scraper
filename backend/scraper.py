@@ -11,6 +11,152 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 
+UI_NOISE_VALUES = {
+    "search",
+    "zoom in",
+    "zoom out",
+    "n/a",
+    "sponsored",
+}
+
+
+def is_ui_noise(value: str) -> bool:
+    if not value:
+        return True
+    normalized = " ".join(value.split()).strip().lower()
+    return normalized in UI_NOISE_VALUES
+
+
+def clean_name_value(value: str) -> str:
+    if not value:
+        return ""
+    cleaned = " ".join(value.split()).strip()
+    # Remove trailing parenthetical gibberish (e.g., "Cozy Rice (åçåèçåºï")
+    if " (" in cleaned:
+        base, tail = cleaned.rsplit(" (", 1)
+        if tail and not re.search(r"[A-Za-z0-9]", tail):
+            cleaned = base.strip()
+    return cleaned
+
+
+def has_core_details(data: dict) -> bool:
+    return any(not is_ui_noise(data.get(key, "")) for key in ["address", "category"])
+
+
+def is_valid_maps_url(value: str) -> bool:
+    if not value:
+        return False
+    normalized = " ".join(value.split()).strip()
+    if is_ui_noise(normalized):
+        return False
+    if any(bad in normalized for bad in ["support.google.com", "accounts.google.com", "policies.google.com"]):
+        return False
+    if not normalized.startswith("http"):
+        return False
+    if "/search?" in normalized and "udm=1" in normalized and "#rlimm=" not in normalized and "ludocid=" not in normalized and "cid=" not in normalized:
+        return False
+    return True
+
+
+def get_detail_panel_root(driver, name_element=None):
+    if name_element is not None:
+        xpaths = [
+            "./ancestor::div[@data-attrid][1]",
+            "./ancestor::div[contains(@class,'kp-wholepage')][1]",
+            "./ancestor::div[contains(@class,'xpdopen')][1]",
+            "./ancestor::div[@role='main'][1]",
+        ]
+        for xp in xpaths:
+            try:
+                return name_element.find_element(By.XPATH, xp)
+            except:
+                continue
+    return None
+
+
+def find_elements_with_fallback(root, driver, selector):
+    elements = []
+    if root is not None:
+        try:
+            elements = root.find_elements(By.CSS_SELECTOR, selector)
+        except:
+            elements = []
+    if not elements:
+        try:
+            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+        except:
+            elements = []
+    return elements
+
+
+def find_element_with_fallback(root, driver, selector):
+    if root is not None:
+        try:
+            return root.find_element(By.CSS_SELECTOR, selector)
+        except:
+            pass
+    try:
+        return driver.find_element(By.CSS_SELECTOR, selector)
+    except:
+        return None
+
+
+def extract_maps_url(root, driver):
+    href_selectors = [
+        'a[aria-label*="Directions"]',
+        'a[data-item-id*="directions"]',
+        'a[href*="/maps"]',
+        'a[href*="maps.google.com"]',
+        'a[href*="google.com/maps"]',
+    ]
+    for selector in href_selectors:
+        elements = find_elements_with_fallback(root, driver, selector)
+        for elem in elements:
+            href = elem.get_attribute('href') or ''
+            href = href.strip()
+            if is_valid_maps_url(href):
+                return href
+
+    # Try data-url attributes (sometimes used for share/directions)
+    data_url_selectors = [
+        '[data-url]',
+        'a[data-url]',
+        'button[data-url]',
+    ]
+    for selector in data_url_selectors:
+        elements = find_elements_with_fallback(root, driver, selector)
+        for elem in elements:
+            data_url = elem.get_attribute('data-url') or ''
+            data_url = data_url.strip()
+            if is_valid_maps_url(data_url):
+                return data_url
+
+    return ""
+
+
+def get_panel_name_text(driver):
+    name_selectors = [
+        'h1.DUwDvf',
+        'h2.qrShPb',
+        'div.SPZz6b h1',
+        'div.SPZz6b h2',
+        '[role="heading"]',
+        '.rG09U',
+        '.H07f0c',
+        'div.PZPZ1c h2',
+        'div.PZPZ1c h1'
+    ]
+    for selector in name_selectors:
+        try:
+            elem = driver.find_element(By.CSS_SELECTOR, selector)
+            text = clean_name_value(elem.text.strip())
+            if text and not is_ui_noise(text):
+                return text
+        except:
+            continue
+    return ""
+
+
 def extract_detail_panel(driver, listing_data=None, search_location=""):
     """Extract data from the right side detail panel after clicking"""
     business_data = listing_data.copy() if listing_data else {}
@@ -37,16 +183,22 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
 
         # Wait for any name selector to appear
         wait = WebDriverWait(driver, 4) # Further reduced wait time
-        nameFound = business_data.get('name') != "N/A"
+        current_name = clean_name_value(business_data.get('name', ''))
+        nameFound = current_name and not is_ui_noise(current_name)
+        if nameFound:
+            business_data['name'] = current_name
 
+        panel_root = None
         if not nameFound:
             for selector in name_selectors:
                 try:
                     name_elem = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, selector)))
                     name = name_elem.text.strip()
-                    if name:
+                    name = clean_name_value(name)
+                    if name and not is_ui_noise(name):
                         business_data['name'] = name
                         nameFound = True
+                        panel_root = get_detail_panel_root(driver, name_elem)
                         break
                 except:
                     continue
@@ -57,13 +209,21 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
                 headings = driver.find_elements(By.CSS_SELECTOR, 'h1, h2, [role="heading"]')
                 for h in headings:
                     if h.is_displayed():
-                        t = h.text.strip()
-                        if t and len(t) > 2:
+                        t = clean_name_value(h.text.strip())
+                        if t and len(t) > 2 and not is_ui_noise(t):
                             business_data['name'] = t
                             nameFound = True
+                            panel_root = get_detail_panel_root(driver, h)
                             break
             except:
                 pass
+        if panel_root is None:
+            try:
+                # Try to derive panel root from current name element (if already found)
+                name_for_root = driver.find_element(By.CSS_SELECTOR, 'h1.DUwDvf, h2.qrShPb')
+                panel_root = get_detail_panel_root(driver, name_for_root)
+            except:
+                panel_root = None
 
         if not nameFound:
             business_data['name'] = "N/A"
@@ -303,7 +463,7 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
         for selector in category_selectors:
             try:
                 # Use find_elements to catch ALL matches
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                elements = find_elements_with_fallback(panel_root, driver, selector)
                 found_valid_category = False
                 
                 # Check up to 5 elements
@@ -316,6 +476,8 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
                     
                     if not raw_text:
                         continue
+                    if is_ui_noise(raw_text):
+                        continue
 
                     # CHECK 1: Is it just a price, rating, or number? (e.g. "$50-100", "4.8", "(500)")
                     # If it contains NO letters, it's not a category. (Categories names have letters)
@@ -323,7 +485,7 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
                         continue
                         
                     # CHECK 2: Is it a common functional button?
-                    if any(x in raw_text.lower() for x in ['phone', 'website', 'address', 'open', 'close', 'menu', 'copy', 'send to']):
+                    if any(x in raw_text.lower() for x in ['phone', 'website', 'address', 'open', 'close', 'menu', 'copy', 'send to', 'search', 'zoom in']):
                          if len(raw_text) < 20: # Long text might contain these words legitimately
                              continue
 
@@ -346,11 +508,6 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
                         continue
 
                     # If we survived, this is likely the category
-                    # Take the last part if leftovers exist (e.g. "Restaurant")
-                    parts = category.split()
-                    # But don't split if it looks like a multi-word category "French restaurant"
-                    # Just keep the cleaned string.
-                    
                     business_data['category'] = category
                     print(f"DEBUG: Extracted category from detail panel using '{selector}': {category}")
                     found_valid_category = True
@@ -362,11 +519,14 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
             except Exception as e:
                 continue
 
-        if 'category' not in business_data or business_data['category'] == "N/A":
+        category_value = business_data.get('category', '')
+        if is_ui_noise(category_value):
             business_data['category'] = "N/A"
 
         # Address
         address_selectors = [
+            'div[data-local-attribute="d3adr"]',  # New address container (includes label + LrzXr)
+            'div[data-dtype="d3ifr"]',            # Fallback container seen with address label
             'span.LrzXr',
             'button[data-item-id="address"]',
             'button[data-tooltip*="Address"]',
@@ -377,20 +537,33 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
 
         for selector in address_selectors:
             try:
-                addr_elem = driver.find_element(By.CSS_SELECTOR, selector)
-                address = addr_elem.get_attribute('aria-label')
+                addr_elem = find_element_with_fallback(panel_root, driver, selector)
+                if not addr_elem:
+                    continue
+                # Prefer the inner LrzXr span when present (common in the new container)
+                address = ""
+                try:
+                    inner = addr_elem.find_element(By.CSS_SELECTOR, 'span.LrzXr')
+                    address = inner.text.strip()
+                except:
+                    pass
+                if not address:
+                    address = addr_elem.get_attribute('aria-label')
                 if not address:
                     address = addr_elem.text.strip()
 
                 if address:
                     address = address.replace('Address: ', '').replace('Copy address', '').strip()
-                    if address:
+                    if address.lower().startswith('address'):
+                        # If text includes label, remove it and any separator
+                        address = address.replace('Address', '').replace(':', '').strip()
+                    if address and not is_ui_noise(address):
                         business_data['address'] = address
                         break
             except:
                 continue
 
-        if 'address' not in business_data:
+        if 'address' not in business_data or is_ui_noise(business_data.get('address', '')):
             business_data['address'] = "N/A"
 
         # Phone Number - Enhanced extraction with better debugging
@@ -482,38 +655,89 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
 
         for selector in website_selectors:
             try:
-                website_elem = driver.find_element(By.CSS_SELECTOR, selector)
+                website_elem = find_element_with_fallback(panel_root, driver, selector)
+                if not website_elem:
+                    continue
                 website = website_elem.get_attribute('href')
                 if not website:
                     website = website_elem.text.strip()
 
-                if website and 'http' in website and 'google' not in website.lower():
+                if website and not is_ui_noise(website) and 'http' in website and 'google' not in website.lower():
                     business_data['website'] = website
                     break
             except:
                 continue
 
-        if 'website' not in business_data:
+        if 'website' not in business_data or is_ui_noise(business_data.get('website', '')):
             business_data['website'] = "N/A"
 
-        # Price Range
+        # Price Range - Enhanced extraction
         price_selectors = [
+            'div.zloOqf.kpS1Ac.vk_gy span.YhemCb',  # Specific container from user example
+            'div.zloOqf span.YhemCb',                # Fallback without all classes
+            'div.TLYLSe.MaBy9 div.zloOqf span',      # Parent container approach
             'span[aria-label*="Price"]',
             'span.mgr77e',
             'span.YhemCb'
         ]
 
+        price_found = False
         for selector in price_selectors:
             try:
-                price = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
-                if price and '$' in price:
-                    business_data['price_range'] = price
+                # Use find_elements to check all matches
+                price_elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                print(f"DEBUG: Found {len(price_elements)} elements for price selector: {selector}")
+                
+                for price_elem in price_elements:
+                    price_text = price_elem.text.strip()
+                    
+                    # Also check aria-label
+                    if not price_text:
+                        price_text = price_elem.get_attribute('aria-label') or ''
+                        price_text = price_text.strip()
+                    
+                    if not price_text:
+                        continue
+                    
+                    print(f"DEBUG: Checking price text: '{price_text}'")
+                    
+                    # Check if it contains a dollar sign or price-like pattern
+                    if '$' in price_text or '₹' in price_text or '£' in price_text or '€' in price_text:
+                        # Make sure it's not part of category text (e.g., "$$$ Restaurant")
+                        # and contains actual numbers or is just dollar signs
+                        if any(c.isdigit() for c in price_text) or price_text.count('$') >= 1:
+                            # Avoid capturing text that looks like "Bar" without price info
+                            # But accept formats like: "$3050", "$$", "$50-100", etc.
+                            
+                            # Skip if it's a category indicator mixed with price symbols
+                            category_words = ['restaurant', 'bar', 'cafe', 'hotel', 'shop', 'store']
+                            is_category = any(word in price_text.lower() for word in category_words)
+                            
+                            if not is_category or '$' in price_text:
+                                # Fix encoding issues: â100 -> -100, â€" -> -, etc.
+                                price_text = price_text.replace('â€"', '-')  # Em dash
+                                price_text = price_text.replace('â€"', '-')  # En dash
+                                price_text = price_text.replace('â', '-')    # Common encoding issue
+                                price_text = price_text.replace('–', '-')    # En dash (proper)
+                                price_text = price_text.replace('—', '-')    # Em dash (proper)
+                                price_text = price_text.replace('\u2013', '-')  # Unicode en dash
+                                price_text = price_text.replace('\u2014', '-')  # Unicode em dash
+                                
+                                business_data['price_range'] = price_text
+                                price_found = True
+                                print(f"DEBUG: Successfully extracted price range: {price_text}")
+                                break
+                
+                if price_found:
                     break
-            except:
+                    
+            except Exception as e:
+                print(f"DEBUG: Error with price selector '{selector}': {e}")
                 continue
 
-        if 'price_range' not in business_data:
+        if not price_found:
             business_data['price_range'] = "N/A"
+            print("DEBUG: No price range found, setting to N/A")
 
         # Hours Status
         hours_selectors = [
@@ -535,7 +759,16 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
         if 'hours_status' not in business_data:
             business_data['hours_status'] = "N/A"
 
-        business_data['google_maps_url'] = driver.current_url
+        maps_url = business_data.get('google_maps_url', '')
+        if not is_valid_maps_url(maps_url):
+            maps_url = extract_maps_url(panel_root, driver)
+        if not is_valid_maps_url(maps_url):
+            current_url = driver.current_url
+            if is_valid_maps_url(current_url):
+                maps_url = current_url
+        if not is_valid_maps_url(maps_url):
+            maps_url = "N/A"
+        business_data['google_maps_url'] = maps_url
 
         return business_data
 
@@ -544,7 +777,7 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
         return None
 
 
-def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, location, termination_flag=None):
+def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, location, termination_flag=None, seen_maps_urls=None):
     """Scrape listings from the current search results page"""
     wait = WebDriverWait(driver, 5)  # Reduced from 8 to 5 seconds for faster failure
     
@@ -615,6 +848,7 @@ def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, locati
     total_to_scrape = len(listings)
     print(f"Will scrape ALL {total_to_scrape} listings from current page")
 
+    last_detail_name = None
     for i in range(total_to_scrape):
         # Check termination at the beginning of each listing iteration
         if termination_flag and termination_flag():
@@ -632,6 +866,14 @@ def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, locati
                 break
 
             listing = current_listings[i]
+            try:
+                listing_href = listing.get_attribute('href') or ''
+                listing_href = listing_href.strip()
+                if listing_href and not is_ui_noise(listing_href):
+                    if any(x in listing_href for x in ['#rlimm=', 'ludocid=', 'cid=', '/maps', 'google.com/maps']):
+                        listing_data['google_maps_url'] = listing_href
+            except:
+                pass
             # Print text content of the listing to verify it's different
             listing_preview = listing.text[:30] if listing.text else "NO TEXT"
             print(f"DEBUG: Selected listing {i+1} for processing, content preview: '{listing_preview}...'")
@@ -645,7 +887,12 @@ def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, locati
                 if card_text:
                     lines = [line.strip() for line in card_text.split('\n') if line.strip()]
                     if lines:
-                        listing_data['name'] = lines[0] # Often the first line is the name
+                        # Pick the first non-noise line as name (skip "Sponsored")
+                        for line in lines:
+                            candidate = clean_name_value(line)
+                            if candidate and not is_ui_noise(candidate):
+                                listing_data['name'] = candidate
+                                break
                     
                     # Extract rating and reviews from the card text (e.g., "4.8(312)")
                     pattern = r'(\d+\.?\d*)\s*\(\s*(\d+\.?\d*\s*[KMB]?|\d{1,3}(?:,\d{3})*)\s*\)'
@@ -725,48 +972,66 @@ def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, locati
                         print(f"[TERMINATION] Terminating during wait for panel load")
                         return all_businesses
                     time.sleep(0.5)
+            # Ensure the detail panel updated to the new listing
+            if last_detail_name:
+                try:
+                    wait.until(lambda d: get_panel_name_text(d) and get_panel_name_text(d) != last_detail_name)
+                except:
+                    pass
 
             # Extract detailed data
             current_page_url = driver.current_url
             print(f"DEBUG: About to extract detail panel for listing {i+1}, current URL: {current_page_url[-50:]}")
             business_data = extract_detail_panel(driver, listing_data)
+            if business_data and business_data.get('name') and business_data.get('name') != "N/A":
+                last_detail_name = business_data.get('name')
 
             # Add search location to the data
             if business_data:
                 business_data['search_location'] = location or "N/A"
 
             if business_data and business_data.get('name') != "N/A":
-                all_businesses.append(business_data)
+                maps_url = business_data.get('google_maps_url', '').strip()
+                if seen_maps_urls is not None and is_valid_maps_url(maps_url):
+                    if maps_url in seen_maps_urls:
+                        print(f"[WARNING] Duplicate google_maps_url detected, skipping: {maps_url}")
+                        continue
+                    seen_maps_urls.add(maps_url)
 
-                # Ensure all expected fields are present in business_data
-                for field in fieldnames:
-                    if field not in business_data:
-                        business_data[field] = "N/A"
+                if not has_core_details(business_data):
+                    print("[WARNING] Skipping item with missing core details (address/category)")
+                else:
+                    all_businesses.append(business_data)
 
-                # Save to CSV immediately and flush to disk
-                with open(csv_filepath, 'a', newline='', encoding='utf-8') as csvfile:
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                    writer.writerow(business_data)
-                    csvfile.flush()
+                    # Ensure all expected fields are present in business_data
+                    for field in fieldnames:
+                        if field not in business_data:
+                            business_data[field] = "N/A"
 
-                # Display comprehensive information
-                name = business_data.get('name', 'N/A')
-                rating = business_data.get('rating', 'N/A')
-                reviews = business_data.get('total_reviews', 'N/A')
-                category = business_data.get('category', 'N/A')
-                address = business_data.get('address', 'N/A')
-                search_location = business_data.get('search_location', 'N/A')
+                    # Save to CSV immediately and flush to disk
+                    with open(csv_filepath, 'a', newline='', encoding='utf-8') as csvfile:
+                        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                        writer.writerow(business_data)
+                        csvfile.flush()
 
-                print(f"[INFO] Scraped: {name}")
-                print(f"   Rating: {rating} - Reviews: {reviews}")
-                print(f"   Category: {category}")
-                print(f"   Address: {address}")
-                print(f"   Search Location: {search_location}")
-                print("-" * 80)
+                    # Display comprehensive information
+                    name = business_data.get('name', 'N/A')
+                    rating = business_data.get('rating', 'N/A')
+                    reviews = business_data.get('total_reviews', 'N/A')
+                    category = business_data.get('category', 'N/A')
+                    address = business_data.get('address', 'N/A')
+                    search_location = business_data.get('search_location', 'N/A')
 
-                # Verify data integrity
-                print(f"DEBUG: Full business data keys: {list(business_data.keys())}")
-                print(f"DEBUG: Rating value: '{rating}', Reviews value: '{reviews}', Search Location: '{search_location}'")
+                    print(f"[INFO] Scraped: {name}")
+                    print(f"   Rating: {rating} - Reviews: {reviews}")
+                    print(f"   Category: {category}")
+                    print(f"   Address: {address}")
+                    print(f"   Search Location: {search_location}")
+                    print("-" * 80)
+
+                    # Verify data integrity
+                    print(f"DEBUG: Full business data keys: {list(business_data.keys())}")
+                    print(f"DEBUG: Rating value: '{rating}', Reviews value: '{reviews}', Search Location: '{search_location}'")
             else:
                 print("[WARNING] Could not extract data for this item")
                 print(f"DEBUG: business_data was: {business_data}")
@@ -1012,6 +1277,7 @@ def scrape_google_search(search_query, location="", csv_filepath="", fieldnames=
                 continue
 
         all_businesses = []
+        seen_maps_urls = set()
         page_num = 1
         max_pages = 100  # Safety limit to prevent infinite loops
 
@@ -1028,7 +1294,15 @@ def scrape_google_search(search_query, location="", csv_filepath="", fieldnames=
 
             # Scrape current page with termination check
             previous_count = len(all_businesses)
-            all_businesses = scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, location, termination_flag)
+            all_businesses = scrape_current_page(
+                driver,
+                all_businesses,
+                csv_filepath,
+                fieldnames,
+                location,
+                termination_flag,
+                seen_maps_urls=seen_maps_urls
+            )
 
             # Check if any new results were added
             new_results = len(all_businesses) - previous_count
