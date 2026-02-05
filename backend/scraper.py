@@ -53,7 +53,13 @@ def is_valid_maps_url(value: str) -> bool:
         return False
     if not normalized.startswith("http"):
         return False
-    if "/search?" in normalized and "udm=1" in normalized and "#rlimm=" not in normalized and "ludocid=" not in normalized and "cid=" not in normalized:
+    # Accept Google Search URLs with business identifiers (#rlimm=, ludocid=, cid=)
+    # These are valid URLs that link to specific businesses
+    if "/search?" in normalized and "udm=1" in normalized:
+        # If it has a business identifier, it's valid
+        if "#rlimm=" in normalized or "ludocid=" in normalized or "cid=" in normalized:
+            return True
+        # Otherwise, it's just a search page without a specific business
         return False
     return True
 
@@ -759,16 +765,28 @@ def extract_detail_panel(driver, listing_data=None, search_location=""):
         if 'hours_status' not in business_data:
             business_data['hours_status'] = "N/A"
 
-        maps_url = business_data.get('google_maps_url', '')
-        if not is_valid_maps_url(maps_url):
-            maps_url = extract_maps_url(panel_root, driver)
-        if not is_valid_maps_url(maps_url):
-            current_url = driver.current_url
-            if is_valid_maps_url(current_url):
-                maps_url = current_url
-        if not is_valid_maps_url(maps_url):
-            maps_url = "N/A"
-        business_data['google_maps_url'] = maps_url
+        # Google Maps URL - Use current URL after clicking (most reliable)
+        # This captures Google Search URLs with #rlimm= fragment which are valid business URLs
+        current_url = driver.current_url
+        
+        # First check if we already have a valid URL from the listing card
+        existing_url = business_data.get('google_maps_url', '')
+        if is_valid_maps_url(existing_url):
+            business_data['google_maps_url'] = existing_url
+            print(f"DEBUG: Using google_maps_url from listing card: {existing_url}")
+        # Otherwise use the current URL from the browser after clicking
+        elif is_valid_maps_url(current_url):
+            business_data['google_maps_url'] = current_url
+            print(f"DEBUG: Using google_maps_url from current URL: {current_url}")
+        # As a fallback, try to extract from the page elements
+        else:
+            extracted_url = extract_maps_url(panel_root, driver)
+            if is_valid_maps_url(extracted_url):
+                business_data['google_maps_url'] = extracted_url
+                print(f"DEBUG: Using google_maps_url from extracted element: {extracted_url}")
+            else:
+                business_data['google_maps_url'] = "N/A"
+                print(f"DEBUG: No valid google_maps_url found, setting to N/A")
 
         return business_data
 
@@ -866,21 +884,25 @@ def scrape_current_page(driver, all_businesses, csv_filepath, fieldnames, locati
                 break
 
             listing = current_listings[i]
-            try:
-                listing_href = listing.get_attribute('href') or ''
-                listing_href = listing_href.strip()
-                if listing_href and not is_ui_noise(listing_href):
-                    if any(x in listing_href for x in ['#rlimm=', 'ludocid=', 'cid=', '/maps', 'google.com/maps']):
-                        listing_data['google_maps_url'] = listing_href
-            except:
-                pass
+            
             # Print text content of the listing to verify it's different
             listing_preview = listing.text[:30] if listing.text else "NO TEXT"
             print(f"DEBUG: Selected listing {i+1} for processing, content preview: '{listing_preview}...'")
 
             # CLICK AND EXTRACT
             # 1. Capture basic info from listing first (fallback)
-            listing_data = {'name': 'N/A', 'address': 'N/A', 'rating': 'N/A', 'total_reviews': 'N/A', 'category': 'N/A'}
+            listing_data = {'name': 'N/A', 'address': 'N/A', 'rating': 'N/A', 'total_reviews': 'N/A', 'category': 'N/A', 'google_maps_url': 'N/A'}
+            
+            # Try to extract google_maps_url from listing card href
+            try:
+                listing_href = listing.get_attribute('href') or ''
+                listing_href = listing_href.strip()
+                if listing_href and not is_ui_noise(listing_href):
+                    if any(x in listing_href for x in ['#rlimm=', 'ludocid=', 'cid=', '/maps', 'google.com/maps']):
+                        listing_data['google_maps_url'] = listing_href
+                        print(f"DEBUG: Extracted google_maps_url from listing card: {listing_href}")
+            except:
+                pass
             try:
                 # Try to find name/address/rating/reviews/category in the result card before clicking
                 card_text = listing.text
